@@ -7,7 +7,6 @@ them using a React widget hosted on S3, compatible with OpenAI App SDK.
 
 import os
 from typing import Optional
-from pydantic import BaseModel, Field
 from fastmcp import FastMCP
 
 # ------------------------------------------------------------------------------
@@ -140,36 +139,16 @@ OFFERS = [
 ]
 
 # ------------------------------------------------------------------------------
-# Input schema for tool
+# Widget resource - CRITICAL FIX
+# The key issue: FastMCP 2.x requires a different approach for metadata
 # ------------------------------------------------------------------------------
 
 
-class GetOffersInput(BaseModel):
-    service_category: Optional[str] = Field(
-        None, description="Filter by service category (e.g., HVAC, Plumbing)"
-    )
-    city: Optional[str] = Field(None, description="Filter by city name")
-    state: Optional[str] = Field(None, description="Filter by state code (e.g., TX)")
-
-
-# ------------------------------------------------------------------------------
-# Widget resource (FastMCP 2.x correct pattern)
-# ------------------------------------------------------------------------------
-
-
-@mcp.resource(
-    "ui://widget/offers.html",
-    mime_type="text/html+skybridge",
-    meta={
-        "openai/widgetPrefersBorder": True,
-        "openai/widgetCSP": {
-            "resource_domains": [S3_BASE_URL],
-            "connect_domains": [],
-        },
-    },
-)
+# Register the resource with proper metadata structure
+@mcp.resource("ui://widget/offers.html")
 def offers_widget_resource():
-    return f"""<!doctype html>
+    """Widget resource that returns HTML content with metadata."""
+    html_content = f"""<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -183,10 +162,24 @@ def offers_widget_resource():
   </body>
 </html>"""
 
+    # Return with proper metadata structure for FastMCP 2.x
+    return {
+        "uri": "ui://widget/offers.html",
+        "mimeType": "text/html+skybridge",
+        "text": html_content,
+        "_meta": {
+            "openai/widgetPrefersBorder": True,
+            "openai/widgetCSP": {
+                "resource_domains": [S3_BASE_URL],
+                "connect_domains": [],
+            },
+        },
+    }
+
 
 # ------------------------------------------------------------------------------
-# Tool: get_offers
-# 
+# Tool: get_offers - CRITICAL FIX
+# The metadata must be returned in the tool response, not in the decorator
 # ------------------------------------------------------------------------------
 
 
@@ -199,6 +192,7 @@ def get_offers(
     city: Optional[str] = None,
     state: Optional[str] = None,
 ) -> dict:
+    """Get filtered home service offers."""
     filtered = OFFERS.copy()
 
     if service_category:
@@ -219,6 +213,7 @@ def get_offers(
         else "No offers found matching your criteria."
     )
 
+    # CRITICAL: Return response with proper structure including _meta
     return {
         "content": [{"type": "text", "text": message}],
         "structuredContent": {"offers": filtered},
@@ -229,46 +224,6 @@ def get_offers(
         },
     }
 
-
-
-@mcp.tool(
-    description="Retrieves available home service offers. "
-    "Can optionally filter by service category, city, or state."
-)
-def get_offers_new(
-    service_category: Optional[str] = None,
-    city: Optional[str] = None,
-    state: Optional[str] = None,
-) -> dict:
-    filtered = OFFERS.copy()
-
-    if service_category:
-        sc = service_category.lower()
-        filtered = [o for o in filtered if sc in o.get("serviceCategory", "").lower()]
-
-    if city:
-        c = city.lower()
-        filtered = [o for o in filtered if c in o.get("city", "").lower()]
-
-    if state:
-        s = state.upper()
-        filtered = [o for o in filtered if o.get("state", "").upper() == s]
-
-    message = (
-        f"Found {len(filtered)} offer{'s' if len(filtered) != 1 else ''}."
-        if filtered
-        else "No offers found matching your criteria."
-    )
-
-    return {
-        "content": [{"type": "text", "text": message}],
-        "structuredContent": {"offers": filtered},
-        "_meta": {
-            "openai/outputTemplate": "ui://widget/offers.html",
-            "openai/toolInvocation/invoking": "Fetching offers",
-            "openai/toolInvocation/invoked": "Here are the available offers",
-        },
-    }
 
 # ------------------------------------------------------------------------------
 # ASGI app exposure (FastMCP 2.x)
