@@ -1,12 +1,14 @@
 """
-Home Service Offers MCP server implemented with FastMCP 2.x.
+Home Service Offers MCP server implemented with FastMCP 2.13.1.
 
-This server exposes tools for fetching home service offers and renders
-them using a React widget hosted on S3, compatible with OpenAI App SDK.
+This uses low-level MCP handlers to bypass the FastMCP 2.13.1 bug where
+@mcp.resource() doesn't include _meta in responses.
 """
 
 import os
-from typing import Optional
+from typing import Any, Dict, List, Optional
+
+import mcp.types as types
 from fastmcp import FastMCP
 
 # ------------------------------------------------------------------------------
@@ -15,7 +17,7 @@ from fastmcp import FastMCP
 
 mcp = FastMCP(
     "Home Service Offers",
-    stateless_http=True,  # Required for ChatGPT / OpenAI App SDK
+    stateless_http=True,
 )
 
 # ------------------------------------------------------------------------------
@@ -26,6 +28,9 @@ S3_BASE_URL = os.getenv(
     "S3_BASE_URL",
     "https://open-ai-app-widget-poc.s3.us-east-1.amazonaws.com",
 )
+
+MIME_TYPE = "text/html+skybridge"
+WIDGET_URI = "ui://widget/offers.html"
 
 # ------------------------------------------------------------------------------
 # Sample offers data
@@ -139,15 +144,51 @@ OFFERS = [
 ]
 
 # ------------------------------------------------------------------------------
-# Widget resource - CRITICAL FIX
-# The key issue: FastMCP 2.x requires a different approach for metadata
+# Helper function for widget metadata
 # ------------------------------------------------------------------------------
 
 
-# Register the resource with proper metadata structure
-@mcp.resource("ui://widget/offers.html")
-def offers_widget_resource():
-    """Widget resource that returns HTML content with metadata."""
+def _widget_meta() -> Dict[str, Any]:
+    """Generate widget metadata for resources and tools."""
+    return {
+        "openai/widgetPrefersBorder": True,
+        "openai/widgetCSP": {
+            "resource_domains": [S3_BASE_URL],
+            "connect_domains": [],
+        },
+    }
+
+
+# ------------------------------------------------------------------------------
+# LOW-LEVEL RESOURCE HANDLERS (bypasses FastMCP 2.13.1 bug)
+# ------------------------------------------------------------------------------
+
+
+@mcp._mcp_server.list_resources()
+async def _list_resources() -> List[types.Resource]:
+    """List available resources."""
+    return [
+        types.Resource(
+            name="Home Service Offers Widget",
+            title="Home Service Offers Widget",
+            uri=WIDGET_URI,
+            description="Widget markup for displaying home service offers",
+            mimeType=MIME_TYPE,
+            _meta=_widget_meta(),
+        )
+    ]
+
+
+async def _handle_read_resource(req: types.ReadResourceRequest) -> types.ServerResult:
+    """Handle resource read requests."""
+    if str(req.params.uri) != WIDGET_URI:
+        return types.ServerResult(
+            types.ReadResourceResult(
+                contents=[],
+                _meta={"error": f"Unknown resource: {req.params.uri}"},
+            )
+        )
+
     html_content = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -162,77 +203,138 @@ def offers_widget_resource():
   </body>
 </html>"""
 
-    # Return with proper metadata structure for FastMCP 2.x
-    return {
-        "uri": "ui://widget/offers.html",
-        "mimeType": "text/html+skybridge",
-        "text": html_content,
-        "_meta": {
-            "openai/widgetPrefersBorder": True,
-            "openai/widgetCSP": {
-                "resource_domains": [S3_BASE_URL],
-                "connect_domains": [],
+    contents = [
+        types.TextResourceContents(
+            uri=WIDGET_URI,
+            mimeType=MIME_TYPE,
+            text=html_content,
+            _meta=_widget_meta(),
+        )
+    ]
+
+    return types.ServerResult(types.ReadResourceResult(contents=contents))
+
+
+# Register the resource handler
+mcp._mcp_server.request_handlers[types.ReadResourceRequest] = _handle_read_resource
+
+# ------------------------------------------------------------------------------
+# LOW-LEVEL TOOL HANDLERS
+# ------------------------------------------------------------------------------
+
+
+@mcp._mcp_server.list_tools()
+async def _list_tools() -> List[types.Tool]:
+    """List available tools."""
+    return [
+        types.Tool(
+            name="get_offers",
+            title="Get Home Service Offers",
+            description="Retrieves available home service offers. Can optionally filter by service category, city, or state.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "service_category": {
+                        "type": "string",
+                        "description": "Filter by service category (e.g., 'HVAC', 'Plumbing', 'Electrical')",
+                    },
+                    "city": {
+                        "type": "string",
+                        "description": "Filter by city name",
+                    },
+                    "state": {
+                        "type": "string",
+                        "description": "Filter by state code (e.g., 'TX', 'MO')",
+                    },
+                },
+                "additionalProperties": False,
             },
-        },
-    }
+            _meta={
+                "openai/outputTemplate": WIDGET_URI,
+                "openai/toolInvocation/invoking": "Fetching offers",
+                "openai/toolInvocation/invoked": "Here are the available offers",
+            },
+            annotations={
+                "destructiveHint": False,
+                "openWorldHint": False,
+                "readOnlyHint": True,
+            },
+        )
+    ]
 
 
-# ------------------------------------------------------------------------------
-# Tool: get_offers - CRITICAL FIX
-# The metadata must be returned in the tool response, not in the decorator
-# ------------------------------------------------------------------------------
+async def _handle_call_tool(req: types.CallToolRequest) -> types.ServerResult:
+    """Handle tool call requests."""
+    if req.params.name != "get_offers":
+        return types.ServerResult(
+            types.CallToolResult(
+                content=[
+                    types.TextContent(
+                        type="text", text=f"Unknown tool: {req.params.name}"
+                    )
+                ],
+                isError=True,
+            )
+        )
 
+    arguments = req.params.arguments or {}
+    filtered_offers = OFFERS.copy()
 
-@mcp.tool(
-    description="Retrieves available home service offers. "
-    "Can optionally filter by service category, city, or state."
-)
-def get_offers(
-    service_category: Optional[str] = None,
-    city: Optional[str] = None,
-    state: Optional[str] = None,
-) -> dict:
-    """Get filtered home service offers."""
-    filtered = OFFERS.copy()
+    # Apply filters
+    if arguments.get("service_category"):
+        category_lower = arguments["service_category"].lower()
+        filtered_offers = [
+            offer
+            for offer in filtered_offers
+            if category_lower in offer.get("serviceCategory", "").lower()
+        ]
 
-    if service_category:
-        sc = service_category.lower()
-        filtered = [o for o in filtered if sc in o.get("serviceCategory", "").lower()]
+    if arguments.get("city"):
+        city_lower = arguments["city"].lower()
+        filtered_offers = [
+            offer
+            for offer in filtered_offers
+            if city_lower in offer.get("city", "").lower()
+        ]
 
-    if city:
-        c = city.lower()
-        filtered = [o for o in filtered if c in o.get("city", "").lower()]
+    if arguments.get("state"):
+        state_upper = arguments["state"].upper()
+        filtered_offers = [
+            offer
+            for offer in filtered_offers
+            if offer.get("state", "").upper() == state_upper
+        ]
 
-    if state:
-        s = state.upper()
-        filtered = [o for o in filtered if o.get("state", "").upper() == s]
+    # Prepare response
+    count = len(filtered_offers)
+    if count == 0:
+        message = "No offers found matching your criteria."
+    else:
+        message = f"Found {count} offer{'s' if count != 1 else ''}."
 
-    message = (
-        f"Found {len(filtered)} offer{'s' if len(filtered) != 1 else ''}."
-        if filtered
-        else "No offers found matching your criteria."
+    return types.ServerResult(
+        types.CallToolResult(
+            content=[types.TextContent(type="text", text=message)],
+            structuredContent={"offers": filtered_offers},
+            _meta={
+                "openai/toolInvocation/invoking": "Fetching offers",
+                "openai/toolInvocation/invoked": "Here are the available offers",
+            },
+        )
     )
 
-    # CRITICAL: Return response with proper structure including _meta
-    return {
-        "content": [{"type": "text", "text": message}],
-        "structuredContent": {"offers": filtered},
-        "_meta": {
-            "openai/outputTemplate": "ui://widget/offers.html",
-            "openai/toolInvocation/invoking": "Fetching offers",
-            "openai/toolInvocation/invoked": "Here are the available offers",
-        },
-    }
 
+# Register the tool handler
+mcp._mcp_server.request_handlers[types.CallToolRequest] = _handle_call_tool
 
 # ------------------------------------------------------------------------------
-# ASGI app exposure (FastMCP 2.x)
+# ASGI app exposure
 # ------------------------------------------------------------------------------
 
 app = mcp.http_app
 
 # ------------------------------------------------------------------------------
-# CORS (required for ChatGPT widget fetches)
+# CORS middleware
 # ------------------------------------------------------------------------------
 
 try:
@@ -247,7 +349,6 @@ try:
     )
 except Exception:
     pass
-
 
 # ------------------------------------------------------------------------------
 # Local development entrypoint
