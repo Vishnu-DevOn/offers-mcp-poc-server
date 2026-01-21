@@ -48,7 +48,7 @@ WIDGET_URI = "ui://widget/offers.html"
 # Update this with your actual token from OpenAI submission form
 OPENAI_VERIFICATION_TOKEN = os.getenv(
     "OPENAI_VERIFICATION_TOKEN",
-    "4oH7jwQBlvDbh3X9xyXCEQzrKGeTEY2hwvbM8jqAEWw",  # Replace with your token
+    "4oH7jwQBivDbh3X9xyXCEQzrKGeTEY2hwvbM8jqAEWw",  # Replace with your token
 )
 
 # ==============================================================================
@@ -234,7 +234,7 @@ def _widget_meta() -> Dict[str, Any]:
 
 # Get the underlying FastAPI app to add custom routes
 @mcp.custom_route(path="/.well-known/openai-apps-challenge", methods=["GET"])
-async def openai_domain_verification():
+async def openai_domain_verification(request):
     """
     OpenAI Domain Verification Endpoint.
 
