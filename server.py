@@ -45,11 +45,11 @@ MIME_TYPE = "text/html+skybridge"
 WIDGET_URI = "ui://widget/offers.html"
 
 # OpenAI Domain Verification Token
-# Update this with your actual token from OpenAI submission form
+# IMPORTANT: Copy the EXACT token from OpenAI (no spaces, no newlines)
+# Update this with your actual token from the OpenAI submission form
 OPENAI_VERIFICATION_TOKEN = os.getenv(
-    "OPENAI_VERIFICATION_TOKEN",
-    "4oH7jwQBivDbh3X9xyXCEQzrKGeTEY2hwvbM8jqAEWw",  # Replace with your token
-)
+    "OPENAI_VERIFICATION_TOKEN", "4oH7jwQBivDbh3X9xyXCEQzrKGeTEY2hwvbM8jqAEWw"
+).strip()  # Remove any accidental whitespace
 
 # ==============================================================================
 # TENANT DATABASE
@@ -241,14 +241,22 @@ async def openai_domain_verification(request):
     This endpoint is required for OpenAI to verify domain ownership.
     The token is provided by OpenAI during the app submission process.
 
-    Returns the verification token as plain text.
+    Returns the verification token as plain text (no newlines, no extra formatting).
 
     Set via environment variable:
         OPENAI_VERIFICATION_TOKEN=your_actual_token_here
 
     Or update the OPENAI_VERIFICATION_TOKEN constant at the top of this file.
     """
-    return PlainTextResponse(content=OPENAI_VERIFICATION_TOKEN, media_type="text/plain")
+    # Return exact token as plain text, no extra formatting
+    return PlainTextResponse(
+        content=OPENAI_VERIFICATION_TOKEN,
+        media_type="text/plain",
+        headers={
+            "Content-Type": "text/plain; charset=utf-8",
+            "Cache-Control": "no-cache",
+        },
+    )
 
 
 # ==============================================================================
