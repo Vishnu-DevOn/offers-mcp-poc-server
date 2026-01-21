@@ -8,6 +8,7 @@ Key Changes:
 1. Use FastMCP Middleware instead of Starlette middleware
 2. Use FastMCP's Context system instead of ContextVar
 3. Extract account_id directly in handlers using get_http_request()
+4. Added OpenAI domain verification endpoint
 
 Each business accesses via:
     /mcp?account_id={accountId}
@@ -15,6 +16,9 @@ Each business accesses via:
 Example URLs:
     http://localhost:8000/mcp?account_id=179ae270-6132-43f5-8398-989481085ea8
     http://localhost:8000/mcp?account_id=247bd891-7243-54e6-9409-a89592196fb9
+
+Domain Verification:
+    http://localhost:8000/.well-known/openai-apps-challenge
 """
 
 import os
@@ -24,6 +28,7 @@ import mcp.types as types
 from fastmcp import FastMCP, Context
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.dependencies import get_http_request
+from fastapi.responses import PlainTextResponse
 
 from offers_data import OFFERS
 
@@ -38,6 +43,13 @@ S3_BASE_URL = os.getenv(
 
 MIME_TYPE = "text/html+skybridge"
 WIDGET_URI = "ui://widget/offers.html"
+
+# OpenAI Domain Verification Token
+# Update this with your actual token from OpenAI submission form
+OPENAI_VERIFICATION_TOKEN = os.getenv(
+    "OPENAI_VERIFICATION_TOKEN",
+    "4oH7jwQBlvDbh3X9xyXCEQzrKGeTEY2hwvbM8jqAEWw",  # Replace with your token
+)
 
 # ==============================================================================
 # TENANT DATABASE
@@ -213,6 +225,30 @@ def _widget_meta() -> Dict[str, Any]:
             "connect_domains": [],
         },
     }
+
+
+# ==============================================================================
+# OPENAI DOMAIN VERIFICATION
+# ==============================================================================
+
+
+# Get the underlying FastAPI app to add custom routes
+@mcp.custom_route(path="/.well-known/openai-apps-challenge", methods=["GET"])
+async def openai_domain_verification():
+    """
+    OpenAI Domain Verification Endpoint.
+
+    This endpoint is required for OpenAI to verify domain ownership.
+    The token is provided by OpenAI during the app submission process.
+
+    Returns the verification token as plain text.
+
+    Set via environment variable:
+        OPENAI_VERIFICATION_TOKEN=your_actual_token_here
+
+    Or update the OPENAI_VERIFICATION_TOKEN constant at the top of this file.
+    """
+    return PlainTextResponse(content=OPENAI_VERIFICATION_TOKEN, media_type="text/plain")
 
 
 # ==============================================================================
@@ -435,6 +471,10 @@ if __name__ == "__main__":
     print("URL Pattern: /mcp?account_id={account_id}")
     print("Cloud Compatible: YES (uses FastMCP native Context)")
     print()
+    print("🔐 Domain Verification:")
+    print(f"   Token: {OPENAI_VERIFICATION_TOKEN[:20]}...")
+    print(f"   Endpoint: /.well-known/openai-apps-challenge")
+    print()
     print("Available Accounts:")
     for account_id, account_data in db.accounts.items():
         offer_count = len(db.get_offers_for_account(account_id))
@@ -449,6 +489,9 @@ if __name__ == "__main__":
         print(
             f'  npx @modelcontextprotocol/inspector "http://localhost:8000/mcp?account_id={first_account_id}"'
         )
+    print()
+    print("Test domain verification:")
+    print("  curl http://localhost:8000/.well-known/openai-apps-challenge")
     print()
     print("=" * 80)
 
