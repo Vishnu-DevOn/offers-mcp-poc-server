@@ -48,7 +48,7 @@ WIDGET_URI = "ui://widget/offers.html"
 # IMPORTANT: Copy the EXACT token from OpenAI (no spaces, no newlines)
 # Update this with your actual token from the OpenAI submission form
 OPENAI_VERIFICATION_TOKEN = os.getenv(
-    "OPENAI_VERIFICATION_TOKEN", "4oH7jwQBivDbh3X9xyXCEQzrKGeTEY2hwvbM8jqAEWw"
+    "OPENAI_VERIFICATION_TOKEN", "4oH7jwQBlvDbh3X9xyXCEQzrKGeTEY2hwvbM8jqAEWw"
 ).strip()  # Remove any accidental whitespace
 
 # ==============================================================================
